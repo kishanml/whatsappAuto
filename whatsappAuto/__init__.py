@@ -1,0 +1,1 @@
+from whatsappAuto.main import whatsappAuto
