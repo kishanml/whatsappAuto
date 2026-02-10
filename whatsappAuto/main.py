@@ -21,7 +21,7 @@ class XPATHS(str,Enum):
     SEARCH_BAR = '//*[@id="side"]/div[1]/div/div[2]/div/div/div[1]/p'
     GROUP_BUTTON = '//*[@id="group-filter"]/div/div/div/span/span/span'
     SEARCH_RESULT_ROWS= 'div[role="row"]'
-    CHATBOX = '//*[@id="main"]/div[2]'
+    CHATBOX = '//*[@id="main"]'
     CHAT_PANE_SELECTOR = 'div[data-scrolltracepolicy="wa.web.conversation.messages"]'
     CHAT_DIV='.//div[@role="row"]'
     MESSAGE_IN='.//div[starts-with(@class,"message-in")]'
@@ -31,92 +31,92 @@ class XPATHS(str,Enum):
 
 class whatsappAuto:
     
-    def __init__(self,
-                 group_title : str,
-                 till_date : datetime = datetime.now().today().date())-> None:
+    def __init__(self)-> None:
         
 
-        options = webdriver.chrome.options.Options()
-        self.driver = webdriver.Chrome(options=options)
-        self.driver.maximize_window()
-        self.driver.set_script_timeout(90)
-
-        self.group_title = group_title
-        self.till_date = till_date
+        self.driver = webdriver.Chrome()
 
         self.scroll_pause : int =2.5
-        self.chats : pd.DataFrame = pd.DataFrame()
-
-        self.date_comp = re.compile(r"(\d{2}:\d{2})")
-        self.time_comp = re.compile(r"(\d{1,2}\/\d{1,2}\/\d{2,4})")
+        self.time_comp = re.compile(r"(\d{2}:\d{2})")
+        self.date_comp = re.compile(r"(\d{1,2}\/\d{1,2}\/\d{2,4})")
         self.ref_user = lambda x: x.split(' ',2)[-1]
- 
-    def run(self):
+    
+    def get_chats(self, group_title ,till_date, count_limit : int = 50):
 
         if not self.whatsapp_is_loaded():
             print("You've quit.")
             self.driver.quit()
             return
         
-        if not self.group_found():
+        if not self.group_found(group_title):
             print("You've quit.")
             self.driver.quit()
             return 
 
         
-        finished = False
-        chat_list = []
-        seen_hashes = set()
         print("Group found! Starting scrape...")
+        finished = False
+        data = []
+        seen = set()
+        count = 0
         while True:
         
-            # TODO : to be refined
-            chat_divs = self.chatbox_element.find_elements(By.XPATH, XPATHS.CHAT_DIV)
-            for section in chat_divs:
-                
-                message_in = section.find_elements(By.XPATH,XPATHS.MESSAGE_IN)
-                for msg in message_in:
+            try:
+                pane = self.driver.find_element(By.CSS_SELECTOR, XPATHS.CHAT_PANE_SELECTOR)        
+                last_height = self.driver.execute_script("return arguments[0].scrollHeight", pane)
+
+                message_ins = self.driver.find_elements(By.XPATH, XPATHS.CHATBOX)
+                for msg in message_ins:
                     try:
-                        sender_element = msg.find_elements(By.XPATH, XPATHS.SENDER_SPAN)
-                        if sender_element:
-                            sender_info = sender_element[0].text.strip()
+                        message_info = msg.find_elements(By.XPATH, XPATHS.MESSAGE_TEXT)
+                        for x in message_info:
+                            msg_date, msg_time = None, None
+                            metadata = x.get_attribute("data-pre-plain-text")
+                            if metadata is not None:
+                                is_date_exists = self.date_comp.search(metadata)
+                                if is_date_exists:
+                                    msg_date = is_date_exists.group()
+                                    
+                                is_time_exists = self.time_comp.search(metadata)
+                                if is_time_exists:
+                                    msg_time = is_time_exists.group()
+                                if msg_date and msg_time:
+                                    msg_datetime = pd.to_datetime(msg_date+' '+msg_time,format="%m/%d/%Y %H:%M")
+                                    # print(msg_datetime,msg_datetime.month)
+                                    if msg_datetime.normalize() >= till_date.normalize():
+                                        msg_text = str(x.text.split('\n')[-1])
+                                        unique_id = hashlib.md5((str(msg_datetime) + msg_text).encode()).hexdigest()
+                                        if unique_id not in seen:
+                                            data.append({'date':msg_date,'time':msg_time,'sender':self.ref_user(metadata),'message':msg_text})
+                                            seen.add(unique_id)
+                                    elif msg_datetime < till_date.normalize():
+                                        finished = True
 
-                        message_info = msg.find_element(By.XPATH, XPATHS.MESSAGE_TEXT)
-                        metadata = message_info.get_attribute("data-pre-plain-text")
-                        if not metadata: continue
-                        
-                        msg_date = self.date_comp.search(metadata).group()
-                        msg_time = self.time_comp.search(metadata).group()
-                        msg_datetime = pd.to_datetime(msg_date + ' ' + msg_time)
-                        if msg_datetime.date() < self.till_date:
-                            finished = True
-                            break    
-                        print(metadata,sender_info,message_info.text.strip())
 
-                        msg_text = message_info.text.strip()
-                        unique_id = hashlib.md5((metadata + msg_text).encode()).hexdigest()
-
-                        if unique_id not in seen_hashes:
-                            chat_list.append({
-                                "sender": self.ref_user(metadata),
-                                "sender_2":sender_info,
-                                "datetime": msg_datetime,
-                                "message": msg_text
-                            })
-                            seen_hashes.add(unique_id)
-
-                       
                     except Exception as e:
-                        print(traceback.format_exc(),e)
-                        continue
+                        print(e)
 
-                if finished: break
+                    self.driver.execute_script("arguments[0].scrollTop = 0;", pane)            
+                    time.sleep(self.scroll_pause)
 
-            if not finished:
-                self.driver.execute_script("arguments[0].scrollTop = 0;", self.chatbox_element)
-                time.sleep(self.scroll_pause)
-        
-            return pd.DataFrame(chat_list)
+                new_height = self.driver.execute_script("return arguments[0].scrollHeight", pane)
+                # print('->',finished,count_limit)
+                # if new_height == last_height or finished or count_limit==50:
+
+                if finished or count==count_limit:
+                    print("No more messages to load or reached the sync limit.")
+                    break
+                    
+                # last_height = new_height
+                # print(f"Loaded older messages. New height: {new_height}")
+                count+=1
+
+            except Exception as exc:
+                print(f'Error occured while scraping : {traceback.format_exc()}')
+                break
+
+        self.driver.quit()
+        return pd.DataFrame(data).sort_values(by=['date','time']).reset_index(drop=True) if data else None
         
     
     def whatsapp_is_loaded(self):
@@ -124,7 +124,7 @@ class whatsappAuto:
         print("Loading WhatsApp...", end="\r")
         self.driver.get('https://web.whatsapp.com/')
 
-        logged_in, wait_time = False, 20
+        logged_in, wait_time = False, 30
         while not logged_in:
 
             logged_in = self.user_is_logged_in(wait_time)
@@ -161,7 +161,7 @@ class whatsappAuto:
 
     
 
-    def group_found(self) -> bool:
+    def group_found(self, group_title) -> bool:
 
         print('Searching Group ...')
 
@@ -170,7 +170,7 @@ class whatsappAuto:
             group_button.click()
 
             search_bar_element = self.driver.find_element(By.XPATH, XPATHS.SEARCH_BAR)
-            search_bar_element.send_keys(self.group_title)
+            search_bar_element.send_keys(group_title)
             time.sleep(5)
 
             first_row = self.driver.find_elements(By.CSS_SELECTOR, XPATHS.SEARCH_RESULT_ROWS)[1]
@@ -181,7 +181,7 @@ class whatsappAuto:
 
             self.chatbox_pane = self.driver.find_element(By.CSS_SELECTOR, XPATHS.CHAT_PANE_SELECTOR)
 
-            print(self.group_title, ' found !')
+            print(group_title, ' found !')
             return True
         
         except:
@@ -189,9 +189,3 @@ class whatsappAuto:
             return False
 
 
-
-
-if __name__ == "__main__":
-
-    sel = whatsappAuto(group_title="Demo")
-    print(sel.run())
