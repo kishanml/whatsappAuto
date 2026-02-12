@@ -18,7 +18,7 @@ from selenium.common.exceptions import StaleElementReferenceException, TimeoutEx
 class XPATHS(str,Enum):
 
     START_PANE = '//*[@id="app"]/div/div/div[3]/div/div[5]/section'
-    SEARCH_BAR = '//*[@id="side"]/div[1]/div/div[2]/div/div/div[1]/p'
+    SEARCH_BAR = '//*[@id="side"]/div[1]/div/div/div/div/div[1]'
     GROUP_BUTTON = '//*[@id="group-filter"]/div/div/div/span/span/span'
     SEARCH_RESULT_ROWS= 'div[role="row"]'
     CHATBOX = '//*[@id="main"]'
